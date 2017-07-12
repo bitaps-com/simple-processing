@@ -1,0 +1,4 @@
+aiohttp
+aiomysql
+colorlog
+python-json-logger

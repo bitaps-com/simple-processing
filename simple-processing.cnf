@@ -1,0 +1,13 @@
+[MYSQL]
+
+user = test
+password = simpleprocessing
+host = localhost
+port = 3306
+database = SimpleProcessing
+
+[BITCOIND]
+
+zeromq = tcp://159.8.41.195:8900
+rpc = http://bitaps:processing@159.8.41.195:8332
+
