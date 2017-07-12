@@ -15,12 +15,15 @@ import binascii
 import aiojsonrpc
 from zlib import crc32
 import bitcoin
+import utils
+
 
 class App():
     def __init__(self, loop, logger, config):
         print("test")
         self.loop = loop
         self.log = logger
+        self.config = config
         self.zmq_url = config["BITCOIND"]["zeromq"]
         self.zmqContext = zmq.asyncio.Context()
         self.zmqSubSocket = self.zmqContext.socket(zmq.SUB)
@@ -28,11 +31,12 @@ class App():
         self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "hashblock")
         # self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "hashtx")
         # self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "rawblock")
-        self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "rawtx")
+        # self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "rawtx")
         self.zmqSubSocket.connect(self.zmq_url)
         print(self.zmq_url)
+        self.loop.create_task(self.init_db())
         self.loop.create_task(self.handle())
-        # self.loop.create_task(self.rpctest())
+        self.loop.create_task(self.rpctest())
         # self.loop.create_task(self.mysqltest())
 
     async def handle(self) :
@@ -67,15 +71,92 @@ class App():
             # print(binascii.hexlify(a["script"]))
             # print(bitcoin.script_to_address(binascii.hexlify(a["script"])))
             address.append((bitcoin.script_to_address(binascii.hexlify(a["script"]).decode()),a["value"]))
+        try:
+            conn = await \
+                aiomysql.connect(user=self.MYSQL_CONFIG["user"],
+                                 password=self.MYSQL_CONFIG["password"],
+                                 db="",
+                                 host=self.MYSQL_CONFIG["host"],
+                                 port=int(self.MYSQL_CONFIG["port"]),
+                                 loop=self.loop)
+            cur = await conn.cursor()
+            r =  await utils.check_aex(cur,data["hash"])
+            if r:
+                return
+
+        except Exception:
+            pass
+        finally:
+            conn.close()
         print(address)
+
+    async def handle_block(self, data):
+        """
+        0 Check if block already exist in db
+        1 Check parent block in db:
+            If no parent
+                get last block height from db
+                   if last block height >= recent block height 
+                       this is orphan ignore it
+                   else:
+                       remove top block from db and ask block with
+                       hrecent block height -1
+                       return
+        2 add all transactions from block to db
+            ask full block from node
+            parse txs and add to db in case not exist
+        3 call before add block handler^ if this handler rise 
+          exception block adding filed
+        4 add block to db and commit
+        5 after block add handelr 
+        6 ask next block
+
+        """
+
+    async def get_block_from_node(self, height):
+        pass
+
+
+
+        pass
+
+    async def delete_block(self, data):
+        pass
+
+
+
+    def create_address(self):
+        priv = utils.generate_private_key()
+        pub = bitcoin.privtopub(priv)
+
+    async def init_db(self):
+        conn = await \
+            aiomysql.connect(user=self.MYSQL_CONFIG["user"],
+                             password=self.MYSQL_CONFIG["password"],
+                             db="",
+                             host=self.MYSQL_CONFIG["host"],
+                             port=int(self.MYSQL_CONFIG["port"]),
+                             loop=self.loop)
+        cur = await conn.cursor()
+        await utils.initdb(cur)
+        # await init_db(self.MYSQL_CONFIG["database"], cur)
+        conn.close()
+
 
 
     async def rpctest(self):
         self.rpc = aiojsonrpc.rpc(self.config["BITCOIND"]["rpc"], loop)
-        while 1:
-            p = await  self.rpc.getinfo()
-            print(p)
-            await asyncio.sleep(10)
+        p = await  self.rpc.getblock("000000000000000001630e974c31f5131976eb63848bee5a598e621cf4c54ea9")
+        print(p["hash"])
+        for t in p["tx"][:5]:
+            await self.get_tx(t)
+
+
+
+
+    async def get_tx(self, hash):
+        t = await self.rpc.getrawtransaction(hash,True)
+        print(t)
 
     async def mysqltest(self):
         conn = await \
