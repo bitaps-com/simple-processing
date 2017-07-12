@@ -14,6 +14,7 @@ import struct
 import binascii
 import aiojsonrpc
 from zlib import crc32
+import bitcoin
 
 class App():
     def __init__(self, loop, logger, config):
@@ -24,15 +25,15 @@ class App():
         self.zmqContext = zmq.asyncio.Context()
         self.zmqSubSocket = self.zmqContext.socket(zmq.SUB)
         self.MYSQL_CONFIG = config["MYSQL"]
-        # self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "hashblock")
+        self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "hashblock")
         # self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "hashtx")
         # self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "rawblock")
         self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "rawtx")
         self.zmqSubSocket.connect(self.zmq_url)
         print(self.zmq_url)
-        # self.loop.create_task(self.handle())
+        self.loop.create_task(self.handle())
         # self.loop.create_task(self.rpctest())
-        self.loop.create_task(self.mysqltest())
+        # self.loop.create_task(self.mysqltest())
 
     async def handle(self) :
         msg = await self.zmqSubSocket.recv_multipart()
@@ -52,10 +53,22 @@ class App():
             print('- RAW BLOCK HEADER ('+sequence+') -')
             print(binascii.hexlify(body))
         elif topic == b"rawtx":
-            print('- RAW TX ('+sequence+') -')
-            print(binascii.hexlify(body))
+            self.log.debug("new tx")
+            self.loop.create_task(self.handle_tx(body))
+            # print('- RAW TX ('+sequence+') -')
+            # print(binascii.hexlify(body))
         # schedule ourselves to receive the next message
         asyncio.ensure_future(self.handle())
+
+    async def handle_tx(self, data):
+        d = bitcoin.deserialize(data)
+        address=list()
+        for a in d["outs"]:
+            # print(binascii.hexlify(a["script"]))
+            # print(bitcoin.script_to_address(binascii.hexlify(a["script"])))
+            address.append((bitcoin.script_to_address(binascii.hexlify(a["script"]).decode()),a["value"]))
+        print(address)
+
 
     async def rpctest(self):
         self.rpc = aiojsonrpc.rpc(self.config["BITCOIND"]["rpc"], loop)
