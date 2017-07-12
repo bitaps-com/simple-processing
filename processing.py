@@ -67,10 +67,11 @@ class App():
     async def handle_tx(self, data):
         d = bitcoin.deserialize(data)
         address=list()
+        address_dict = dict()
         for a in d["outs"]:
-            # print(binascii.hexlify(a["script"]))
-            # print(bitcoin.script_to_address(binascii.hexlify(a["script"])))
-            address.append((bitcoin.script_to_address(binascii.hexlify(a["script"]).decode()),a["value"]))
+            t = bitcoin.script_to_address(binascii.hexlify(a["script"]).decode()
+            address_dict[t]= int(a["value"] * 100000000)
+            address.append(t)
         try:
             conn = await \
                 aiomysql.connect(user=self.MYSQL_CONFIG["user"],
@@ -83,6 +84,20 @@ class App():
             r =  await utils.check_aex(cur,data["hash"])
             if r:
                 return
+            affected = await utils.affected(address, cur)
+            if not affected:
+                await utils.add_tx(data["hash"], 0 ,cur)
+            else:
+               tx_id = await utils.add_tx(data["hash"], 1, cur)
+               # todo
+               # блокировка адресов
+               # GET_LOCK
+               # lock += "DO GET_LOCK('%s',-1);" % (a["address"])
+               # unlock += "DO RELEASE_LOCK('%s');" % a["address"]
+               for a in affected:
+                   await utils.add_to_monitoring(data["hash"],
+                                                 int(data["value"] * 100000000),a[0], address_dict[a[1]], cur )
+                   await utils.update_balance()
 
         except Exception:
             pass
@@ -110,8 +125,40 @@ class App():
         4 add block to db and commit
         5 after block add handelr 
         6 ask next block
-
         """
+        try:
+            conn = await \
+                aiomysql.connect(user=self.MYSQL_CONFIG["user"],
+                                 password=self.MYSQL_CONFIG["password"],
+                                 db="",
+                                 host=self.MYSQL_CONFIG["host"],
+                                 port=int(self.MYSQL_CONFIG["port"]),
+                                 loop=self.loop)
+            cur = await conn.cursor()
+            raw_hash = binascii.unhexlify(data["hash"])
+            h = await utils.get_block_by_hash_db(data["hash"], cur)
+            parent = await utils.get_block_parent_by_hash_db(data["hash"], cur)
+            if parent is None:
+                last_height = await utils.get_block_by_hash_db(cur)
+                if last_height >= data["height"]:
+                    return
+            else:
+                delta = data["height"] - last_height
+                if delta == 1:
+                    # await cur.orphan_handler(cur)
+                    await cur.delete_last_block(cur)
+                self.loop.create_task(self.get_block_by_height(data["height"]))
+                return
+        await self.add_block_tx(data["tx"])
+        await utils.add_block_to_db(data)
+        conn.commit()
+        await self.confirm_transactions()
+
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
 
     async def get_block_from_node(self, height):
         pass

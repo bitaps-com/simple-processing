@@ -2,7 +2,10 @@ import random
 import time
 import hashlib
 import binascii
+
+from binascii import hexlify, unhexlify
 import aiomysql
+from zlib import crc32
 
 
 MAX_INT_PRIVATE_KEY   = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141
@@ -82,6 +85,36 @@ def ripemd160_to_address(h):
     h = b"\x00" + h
     h += hashlib.sha256(hashlib.sha256(h).digest()).digest()[:4]
     return encode_Base58(h)
+
+async def affected(address_list, cur):
+    raw_address_list = ["0x"+hexlify(decode_Base58(a)[1:-4]).decode() for a in address_list]
+    raw_address_crc32 = [str(crc32(a)) for a in raw_address_list]
+    await cur.execute("SELECT id, address from Address "
+                      "WHERE address_crc32 in (%s) and address in (%s); " %
+                      (','.join(raw_address_crc32), ','.join(raw_address_list)))
+    rows = await cur.fetchall()
+    af = [(row[0],row[1]) for row in rows]
+    if rows:
+        return af
+    else:
+        return False
+
+async def add_tx(hash, affected, cur):
+    raw_hash = unhexlify(hash)
+    await cur.execute("INSERT INTO Transaction "
+                      "(hash, hash_crc32, timestamp, affected) "
+                      "VALUES "
+                      "(%s, crc32(%s), UNIX_TIMESTAMP()); ", (raw_hash, raw_hash))
+    tx_id = cur.lastrowid
+    return tx_id
+
+async def add_to_monitoring(hash, tx_id,  address_id, amount, cur ):
+    raw_hash = unhexlify(hash)
+    await cur.execute("INSERT INTO Transaction_monitoring (hash, hash_crc32, address_id, tx_id, amount) "
+                      "VALUES  (%s,crc32(%s), %s, %s, %s)" ,  (raw_hash, raw_hash, address_id,amount  ))
+
+async def update_balance():
+    pass
 
 
 async def initdb(cur):
